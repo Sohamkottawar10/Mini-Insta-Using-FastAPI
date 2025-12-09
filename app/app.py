@@ -1,29 +1,48 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Depends, Form
+from app.schemas import PostCreate
+from app.db import Post, create_db_and_tables, get_async_session
+from sqlalchemy.ext.asyncio import AsyncSession
+from contextlib import asynccontextmanager
+from sqlalchemy import select
 
-app = FastAPI()
 
-text_posts = {  1:{"title": "1st Post, yay!!", "content": "This is the 1st post content."},
-                2:{"title": "2nd Post, yay!!", "content": "This is the 2nd post content."},
-                3:{"title": "3rd Post, yay!!", "content": "This is the 3rd post content."},
-                4:{"title": "4th Post, yay!!", "content": "This is the 4th post content."},
-                5:{"title": "5th Post, yay!!", "content": "This is the 5th post content."},
-                6:{"title": "6th Post, yay!!", "content": "This is the 6th post content."},
-                7:{"title": "7th Post, yay!!", "content": "This is the 7th post content."},
-                8:{"title": "8th Post, yay!!", "content": "This is the 8th post content."},
-                9:{"title": "9th Post, yay!!", "content": "This is the 9th post content."},
-                10:{"title": "10th Post, yay!!", "content": "This is the 10th post content."}
-             }
+'''
+This function will be used to manage the lifespan of the FastAPI application.
+This is done to ensure that the database tables are created when the application starts.
+'''
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_db_and_tables()
+    yield
 
-@app.get("/hello-world")
-def hello_world():
-    return {"message": "Hello, World!"}
+app = FastAPI(lifespan=lifespan)
 
-@app.get("post")
-def get_all_posts():
-    return text_posts
 
-@app.get("/post/{id}")
-def get_post(id: int):
-    if id not in text_posts:
-        raise HTTPException(status_code=404, detail="Post not found")
-    return text_posts[id]
+@app.post("/upload")
+async def upload_file(
+        file: UploadFile = File(...),
+        caption: str = Form(""),
+        session: AsyncSession = Depends(get_async_session)
+):
+    
+    post = Post(
+        caption=caption,
+        url="dummy url",
+        file_type="photo",
+        file_name="dummy name"
+    )
+    session.add(post)   # add the post object to the session
+    await session.commit()  # commit the transaction, await is used because it would take time to complete. Writing await will not block the event loop. It will allow other tasks to run while waiting for the commit to complete.
+    await session.refresh(post)  # refresh the post object to get the updated data from the database
+    return post
+
+
+@app.get("/feed")
+async def get_feed(
+    session: AsyncSession = Depends(get_async_session)
+):
+    result = await session.execute(select(Post).order_by(Post.created_at.desc()))
+    posts = [row[0] for row in result.all()]    # convert list of tuples to list of Post objects
+
+    posts_data = []
+    
